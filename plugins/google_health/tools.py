@@ -291,3 +291,16 @@ def _handle_health_daily_summary(args: Dict[str, Any]) -> str:
         return _format_error(exc)
 
     return json.dumps(summary, indent=2)
+
+
+def _handle_health_write_datapoint(args: Dict[str, Any]) -> str:
+    data_type = args.get("data_type")
+    payload = args.get("payload") or {}
+    if not data_type or not isinstance(payload, dict):
+        return "health_write_datapoint requires `data_type` (string) and `payload` (object)."
+    try:
+        client = GoogleHealthClient()
+        result = client.write_data_point(data_type, payload)
+    except GoogleHealthError as exc:
+        return _format_error(exc)
+    return json.dumps(result, indent=2, default=str)

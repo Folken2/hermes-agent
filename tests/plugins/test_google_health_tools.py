@@ -136,6 +136,38 @@ def test_health_daily_summary_aggregates_multi_type(monkeypatch):
     assert parsed["spo2_avg_pct"] == 96.5
 
 
+def test_health_write_datapoint_happy_path(monkeypatch):
+    class S:
+        def __init__(self):
+            self.called = None
+
+        def write_data_point(self, dt, payload):
+            self.called = (dt, payload)
+            return {"name": "datapoints/abc", "updateTime": "2026-05-13T00:00:00Z"}
+
+    s = S()
+    monkeypatch.setattr(gh_tools, "GoogleHealthClient", lambda: s)
+    out = gh_tools._handle_health_write_datapoint({
+        "data_type": "weight",
+        "payload": {"weight": {"weightKg": 78.2}},
+    })
+    parsed = json.loads(out)
+    assert parsed["name"] == "datapoints/abc"
+    assert s.called == ("weight", {"weight": {"weightKg": 78.2}})
+
+
+def test_health_write_datapoint_scope_error(monkeypatch):
+    from plugins.google_health.client import GoogleHealthAPIError
+
+    class S:
+        def write_data_point(self, dt, payload):
+            raise GoogleHealthAPIError("scope", status_code=403, response_body="")
+
+    monkeypatch.setattr(gh_tools, "GoogleHealthClient", lambda: S())
+    out = gh_tools._handle_health_write_datapoint({"data_type": "weight", "payload": {}})
+    assert "--write" in out
+
+
 def test_schemas_all_have_name_and_description():
     for schema in [
         gh_tools.HEALTH_DATA_QUERY_SCHEMA,
