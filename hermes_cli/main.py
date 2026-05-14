@@ -9919,6 +9919,39 @@ def main():
     auth_spotify.add_argument(
         "--timeout", type=float, help="Callback/token exchange timeout in seconds"
     )
+    auth_google_health = auth_subparsers.add_parser(
+        "google-health",
+        help="Authenticate Hermes with Google Health Platform via PKCE",
+    )
+    auth_google_health.add_argument(
+        "google_health_action",
+        nargs="?",
+        choices=["login", "status", "logout"],
+        default="login",
+    )
+    auth_google_health.add_argument(
+        "--client-id",
+        help="Google OAuth Desktop-app client_id (or HERMES_GOOGLE_HEALTH_CLIENT_ID)",
+    )
+    auth_google_health.add_argument(
+        "--write",
+        action="store_true",
+        help="Request the read/write Health Platform scope (default: read-only)",
+    )
+    auth_google_health.add_argument(
+        "--scope",
+        help="Override requested OAuth scopes (advanced)",
+    )
+    auth_google_health.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Do not attempt to open the browser automatically",
+    )
+    auth_google_health.add_argument(
+        "--timeout",
+        type=float,
+        help="Callback/token exchange timeout in seconds",
+    )
     auth_parser.set_defaults(func=cmd_auth)
 
     # =========================================================================
