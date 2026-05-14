@@ -6,17 +6,10 @@ from typing import Optional
 
 import httpx
 
-try:
-    from hermes_cli.auth import AuthError
-except ImportError:  # pragma: no cover — defensive fallback
-    class AuthError(RuntimeError):
-        pass
-
-try:
-    from hermes_cli.auth import resolve_google_health_runtime_credentials
-except ImportError:  # pragma: no cover — pre-Task-12 fallback
-    def resolve_google_health_runtime_credentials(**_kwargs):
-        raise AuthError("Google Health auth not yet wired (Task 12 pending)")
+from hermes_cli.auth import (
+    AuthError,
+    resolve_google_health_runtime_credentials,
+)
 
 
 class GoogleHealthError(RuntimeError):

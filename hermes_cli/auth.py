@@ -110,8 +110,15 @@ DEFAULT_SPOTIFY_SCOPE = " ".join((
     "user-library-read",
     "user-library-modify",
 ))
+DEFAULT_GOOGLE_HEALTH_API_BASE_URL = "https://health.googleapis.com/v4"
+DEFAULT_GOOGLE_HEALTH_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+DEFAULT_GOOGLE_HEALTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+DEFAULT_GOOGLE_HEALTH_SCOPE_READ = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+DEFAULT_GOOGLE_HEALTH_SCOPE_WRITE = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness"
+GOOGLE_HEALTH_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
 SERVICE_PROVIDER_NAMES: Dict[str, str] = {
     "spotify": "Spotify",
+    "google_health": "Google Health",
 }
 
 # Google Gemini OAuth (google-gemini-cli provider, Cloud Code Assist backend)
@@ -2240,6 +2247,140 @@ def get_spotify_auth_status() -> Dict[str, Any]:
         "expires_at": expires_at,
         "api_base_url": state.get("api_base_url"),
         "has_refresh_token": bool(refresh_token),
+    }
+
+
+def _refresh_google_health_token(
+    provider: Dict[str, Any],
+    *,
+    timeout_seconds: float = 30.0,
+) -> Dict[str, Any]:
+    """POST to the Google token endpoint with the refresh_token.
+
+    Google's installed-app PKCE flow does not require a client_secret.
+    Returns an updated provider state dict.
+    """
+    refresh_token = str(provider.get("refresh_token", "") or "").strip()
+    client_id = str(provider.get("client_id", "") or "").strip()
+    if not refresh_token or not client_id:
+        raise AuthError(
+            "Google Health refresh token or client_id missing — "
+            "re-run `hermes auth google-health`.",
+            provider="google_health",
+            code="google_health_refresh_token_missing",
+            relogin_required=True,
+        )
+    token_url = (
+        str(provider.get("token_endpoint", "") or "").strip()
+        or DEFAULT_GOOGLE_HEALTH_TOKEN_ENDPOINT
+    )
+    try:
+        resp = httpx.post(
+            token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+            },
+            timeout=timeout_seconds,
+        )
+    except Exception as exc:
+        raise AuthError(
+            f"Google Health token refresh failed: {exc}",
+            provider="google_health",
+            code="google_health_refresh_failed",
+        ) from exc
+
+    if resp.status_code >= 400:
+        detail = resp.text.strip()
+        raise AuthError(
+            "Google Health token refresh failed. Run "
+            "`hermes auth google-health` again."
+            + (f" Response: {detail[:200]}" if detail else ""),
+            provider="google_health",
+            code="google_health_refresh_failed",
+            relogin_required=True,
+        )
+
+    body = resp.json()
+    if not isinstance(body, dict) or not str(body.get("access_token", "") or "").strip():
+        raise AuthError(
+            "Google Health refresh response did not include an access_token.",
+            provider="google_health",
+            code="google_health_refresh_invalid",
+            relogin_required=True,
+        )
+
+    updated = dict(provider)
+    updated["access_token"] = body["access_token"]
+    expires_in = _coerce_ttl_seconds(body.get("expires_in")) or 3599
+    updated["expires_at"] = int(time.time()) + expires_in - 30
+    if body.get("refresh_token"):
+        updated["refresh_token"] = body["refresh_token"]
+    if body.get("scope"):
+        updated["scope"] = body["scope"]
+    if body.get("token_type"):
+        updated["token_type"] = body["token_type"]
+    return updated
+
+
+def resolve_google_health_runtime_credentials(
+    *,
+    force_refresh: bool = False,
+    refresh_if_expiring: bool = True,
+    refresh_skew_seconds: int = GOOGLE_HEALTH_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+) -> Dict[str, Any]:
+    """Return a runtime credential dict for the Google Health provider.
+
+    Mirrors resolve_spotify_runtime_credentials: returns
+    {access_token, base_url, scope, ...}. Refreshes on expiry using the
+    stored refresh_token against the Google token endpoint.
+    """
+    with _auth_store_lock():
+        auth_store = _load_auth_store()
+        state = _load_provider_state(auth_store, "google_health")
+        if not state:
+            raise AuthError(
+                "Google Health is not authenticated. "
+                "Run `hermes auth google-health` first.",
+                provider="google_health",
+                code="google_health_auth_missing",
+                relogin_required=True,
+            )
+
+        should_refresh = bool(force_refresh)
+        if not should_refresh and refresh_if_expiring:
+            should_refresh = _is_expiring(state.get("expires_at"), refresh_skew_seconds)
+        if should_refresh:
+            state = _refresh_google_health_token(state)
+            _store_provider_state(auth_store, "google_health", state, set_active=False)
+            _save_auth_store(auth_store)
+
+    access_token = str(state.get("access_token", "") or "").strip()
+    if not access_token:
+        raise AuthError(
+            "Google Health access token missing. "
+            "Run `hermes auth google-health` again.",
+            provider="google_health",
+            code="google_health_access_token_missing",
+            relogin_required=True,
+        )
+
+    base_url = (
+        str(state.get("api_base_url", "") or "").strip()
+        or DEFAULT_GOOGLE_HEALTH_API_BASE_URL
+    )
+    return {
+        "provider": "google_health",
+        "access_token": access_token,
+        "api_key": access_token,
+        "token_type": str(state.get("token_type", "Bearer") or "Bearer"),
+        "base_url": base_url,
+        "scope": str(state.get("scope") or "").strip(),
+        "client_id": str(state.get("client_id", "") or "").strip(),
+        "redirect_uri": str(state.get("redirect_uri", "") or "").strip(),
+        "expires_at": state.get("expires_at"),
+        "refresh_token": str(state.get("refresh_token", "") or "").strip(),
     }
 
 
