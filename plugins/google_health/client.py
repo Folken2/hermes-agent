@@ -122,6 +122,39 @@ class GoogleHealthClient:
         err.path = path
         raise err
 
+    def list_data_points(
+        self,
+        data_type: str,
+        *,
+        start_iso: str,
+        end_iso: str,
+        page_token: Optional[str] = None,
+        page_size: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        filter_expr = (
+            f'{data_type}.interval.civil_start_time >= "{start_iso}" '
+            f'AND {data_type}.interval.civil_start_time <= "{end_iso}"'
+        )
+        return self.request(
+            "GET",
+            f"/users/me/dataTypes/{data_type}/dataPoints",
+            params={
+                "filter": filter_expr,
+                "pageToken": page_token,
+                "pageSize": page_size,
+            },
+        )
+
+    def list_authorized_data_types(self) -> Dict[str, Any]:
+        return self.request("GET", "/users/me/dataTypes")
+
+    def write_data_point(self, data_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/users/me/dataTypes/{data_type}/dataPoints",
+            json_body=payload,
+        )
+
 
 def _strip_none(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if d is None:
