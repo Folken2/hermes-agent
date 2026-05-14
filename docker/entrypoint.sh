@@ -92,16 +92,27 @@ if [ ! -f "$HERMES_HOME/SOUL.md" ]; then
     cp "$INSTALL_DIR/docker/SOUL.md" "$HERMES_HOME/SOUL.md"
 fi
 
-# Env-var overrides for config.yaml keys that have no runtime env override.
+# Env-var bridge: write config.yaml keys from env vars on every boot.
 # Essential on platforms without post-deploy shell access (Railway Hobby,
 # managed Fly.io, etc.) where `hermes config set` cannot be invoked
 # manually. Writes are idempotent — re-running with the same value is a
-# no-op. model.* keys (HERMES_MODEL / HERMES_INFERENCE_PROVIDER) are
-# already consumed at runtime by Python, so they don't need a bridge here.
-if [ -n "$HERMES_MEMORY_PROVIDER" ]; then
-    hermes config set memory.provider "$HERMES_MEMORY_PROVIDER" >/dev/null 2>&1 || \
-        echo "Warning: failed to set memory.provider from env var — continuing"
-fi
+# no-op. These keys are NOT respected as runtime env vars by the gateway
+# (gateway/run.py:_resolve_gateway_model reads config.yaml directly,
+# memory.provider is read once at agent init), so the env var → file
+# bridge is the only way to override them on a managed deploy.
+_apply_env_to_config() {
+    local env_var="$1"
+    local config_key="$2"
+    local value="${!env_var}"
+    if [ -n "$value" ]; then
+        hermes config set "$config_key" "$value" >/dev/null 2>&1 || \
+            echo "Warning: failed to set $config_key from $env_var — continuing"
+    fi
+}
+_apply_env_to_config HERMES_MEMORY_PROVIDER memory.provider
+_apply_env_to_config HERMES_MODEL_DEFAULT  model.default
+_apply_env_to_config HERMES_MODEL_PROVIDER model.provider
+_apply_env_to_config HERMES_MODEL_BASE_URL model.base_url
 
 # auth.json: bootstrap from env on first boot only.  Used by orchestrators
 # (e.g. provisioning a Hermes VPS from an account-management service) that
