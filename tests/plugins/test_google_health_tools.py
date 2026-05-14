@@ -102,6 +102,40 @@ def test_health_recent_activity_extracts_session_fields(monkeypatch):
     assert sess["active_duration_seconds"] == 900
 
 
+def test_health_daily_summary_aggregates_multi_type(monkeypatch):
+    def list_data_points(dt, *, start_iso, end_iso, page_token=None, page_size=None):
+        if dt == "exercise":
+            return {"dataPoints": [{"exercise": {"metricsSummary": {
+                "caloriesKcal": 100, "steps": "5000", "distanceMillimeters": 4000000,
+                "averageHeartRateBeatsPerMinute": "95"}, "activeDuration": "1800s"}}]}
+        if dt == "sleep":
+            return {"dataPoints": [{"sleep": {"sleepDurationMinutes": 420, "sleepEfficiencyPct": 88}}]}
+        if dt == "heart_rate":
+            return {"dataPoints": [{"heartRate": {"restingHeartRateBpm": 58}}]}
+        if dt == "spo2":
+            return {"dataPoints": [{"spo2": {"averagePct": 96.5}}]}
+        return {"dataPoints": []}
+
+    _fn = list_data_points
+
+    class S:
+        list_data_points = staticmethod(_fn)
+
+    monkeypatch.setattr(gh_tools, "GoogleHealthClient", lambda: S())
+    out = gh_tools._handle_health_daily_summary({"date": "2026-05-13"})
+    parsed = json.loads(out)
+    assert parsed["date"] == "2026-05-13"
+    assert parsed["steps"] == 5000
+    assert parsed["calories_kcal"] == 100
+    assert parsed["distance_meters"] == pytest.approx(4000.0)
+    assert parsed["active_duration_seconds"] == 1800
+    assert parsed["avg_heart_rate_bpm"] == 95
+    assert parsed["resting_heart_rate_bpm"] == 58
+    assert parsed["sleep_total_minutes"] == 420
+    assert parsed["sleep_efficiency_pct"] == 88
+    assert parsed["spo2_avg_pct"] == 96.5
+
+
 def test_schemas_all_have_name_and_description():
     for schema in [
         gh_tools.HEALTH_DATA_QUERY_SCHEMA,

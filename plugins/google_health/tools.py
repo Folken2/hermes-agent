@@ -164,10 +164,17 @@ def _parse_duration_seconds(value) -> Any:
 def _coerce_number(value) -> Any:
     if value is None:
         return None
-    try:
-        if isinstance(value, str) and "." in value:
-            return float(value)
+    if isinstance(value, bool):
         return int(value)
+    if isinstance(value, float):
+        return value
+    if isinstance(value, int):
+        return value
+    try:
+        s = str(value)
+        if "." in s:
+            return float(s)
+        return int(s)
     except (TypeError, ValueError):
         try:
             return float(value)
@@ -210,3 +217,77 @@ def _handle_health_recent_activity(args: Dict[str, Any]) -> str:
             "active_duration_seconds": _parse_duration_seconds(ex.get("activeDuration")),
         })
     return json.dumps({"sessions": sessions}, indent=2, default=str)
+
+
+def _yesterday_iso() -> str:
+    return (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+
+
+def _safe_list_data_points(client, data_type, start, end):
+    try:
+        return client.list_data_points(data_type, start_iso=start, end_iso=end)
+    except GoogleHealthAPIError as exc:
+        if exc.status_code in (403, 404):
+            return {"dataPoints": []}
+        raise
+
+
+def _handle_health_daily_summary(args: Dict[str, Any]) -> str:
+    date = args.get("date") or _yesterday_iso()
+    start = f"{date}T00:00:00"
+    end = f"{date}T23:59:59"
+
+    summary: Dict[str, Any] = {
+        "date": date,
+        "steps": None,
+        "distance_meters": None,
+        "calories_kcal": None,
+        "active_duration_seconds": None,
+        "avg_heart_rate_bpm": None,
+        "resting_heart_rate_bpm": None,
+        "sleep_total_minutes": None,
+        "sleep_efficiency_pct": None,
+        "spo2_avg_pct": None,
+    }
+    try:
+        client = GoogleHealthClient()
+
+        ex = _safe_list_data_points(client, "exercise", start, end)
+        steps = calories = active = distance_mm = hr_sum = hr_count = 0
+        for dp in ex.get("dataPoints") or []:
+            metrics = (dp.get("exercise") or {}).get("metricsSummary") or {}
+            steps += _coerce_number(metrics.get("steps")) or 0
+            calories += _coerce_number(metrics.get("caloriesKcal")) or 0
+            distance_mm += _coerce_number(metrics.get("distanceMillimeters")) or 0
+            active += _parse_duration_seconds((dp.get("exercise") or {}).get("activeDuration")) or 0
+            hr = _coerce_number(metrics.get("averageHeartRateBeatsPerMinute"))
+            if hr is not None:
+                hr_sum += hr
+                hr_count += 1
+        if ex.get("dataPoints"):
+            summary["steps"] = steps or None
+            summary["calories_kcal"] = calories or None
+            summary["distance_meters"] = (distance_mm / 1000.0) if distance_mm else None
+            summary["active_duration_seconds"] = active or None
+            summary["avg_heart_rate_bpm"] = (hr_sum // hr_count) if hr_count else None
+
+        sleep = _safe_list_data_points(client, "sleep", start, end)
+        if sleep.get("dataPoints"):
+            s = sleep["dataPoints"][0].get("sleep") or {}
+            summary["sleep_total_minutes"] = _coerce_number(s.get("sleepDurationMinutes"))
+            summary["sleep_efficiency_pct"] = _coerce_number(s.get("sleepEfficiencyPct"))
+
+        hr = _safe_list_data_points(client, "heart_rate", start, end)
+        if hr.get("dataPoints"):
+            h = hr["dataPoints"][0].get("heartRate") or {}
+            summary["resting_heart_rate_bpm"] = _coerce_number(h.get("restingHeartRateBpm"))
+
+        spo2 = _safe_list_data_points(client, "spo2", start, end)
+        if spo2.get("dataPoints"):
+            p = spo2["dataPoints"][0].get("spo2") or {}
+            summary["spo2_avg_pct"] = _coerce_number(p.get("averagePct"))
+
+    except GoogleHealthError as exc:
+        return _format_error(exc)
+
+    return json.dumps(summary, indent=2)
