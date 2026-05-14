@@ -109,6 +109,14 @@ RUN chmod -R a+rX /opt/hermes && \
 # this a fast (~1s) egg-link creation with no resolution or downloads.
 RUN uv pip install --no-cache-dir --no-deps -e "."
 
+# ---------- Memory plugin SDKs that aren't in pyproject.toml ----------
+# plugins/memory/supermemory declares supermemory in plugin.yaml's
+# pip_dependencies, but tools/lazy_deps.py has no entry for it (only
+# honcho/hindsight), so the package never gets installed automatically.
+# Bake it in at build time so the supermemory memory provider's
+# is_available() check passes on managed cloud deploys.
+RUN uv pip install --no-cache-dir supermemory
+
 # ---------- Runtime ----------
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
 ENV HERMES_HOME=/opt/data
