@@ -1,0 +1,11 @@
+name: google_health
+version: 0.1.0
+description: "Google Health API integration — 5 tools (data query, data types list, daily summary, recent activity, write data point) using health.googleapis.com/v4 + PKCE Google OAuth. Auth via `hermes auth google-health`. Tools gate on `providers.google_health` in ~/.hermes/auth.json."
+author: NousResearch
+kind: backend
+provides_tools:
+  - health_data_query
+  - health_data_types
+  - health_daily_summary
+  - health_recent_activity
+  - health_write_datapoint
