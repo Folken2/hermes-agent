@@ -185,7 +185,7 @@ def _coerce_number(value) -> Any:
 def _handle_health_recent_activity(args: Dict[str, Any]) -> str:
     limit = int(args.get("limit") or 5)
     limit = max(1, min(limit, 50))
-    now = _dt.datetime.utcnow()
+    now = _dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
     start = (now - _dt.timedelta(days=30)).isoformat(timespec="seconds")
     end = now.isoformat(timespec="seconds")
     try:
