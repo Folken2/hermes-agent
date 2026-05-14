@@ -112,7 +112,7 @@ RUN uv pip install --no-cache-dir --no-deps -e "."
 # ---------- Runtime ----------
 ENV HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist
 ENV HERMES_HOME=/opt/data
-ENV PATH="/opt/data/.local/bin:${PATH}"
+ENV PATH="/opt/hermes/.venv/bin:/opt/data/.local/bin:${PATH}"
 # VOLUME [ "/opt/data" ]  # Disabled for Railway — Railway manages volumes via UI, not Dockerfile.
                             # The HERMES_HOME=/opt/data path above is enough; mount a Railway Volume
                             # at /opt/data in service settings.
