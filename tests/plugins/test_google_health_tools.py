@@ -62,6 +62,46 @@ def test_health_data_types_returns_simplified_list(monkeypatch):
     assert parsed["data_types"] == ["exercise", "sleep", "heart_rate"]
 
 
+def test_health_recent_activity_extracts_session_fields(monkeypatch):
+    sample = {
+        "dataPoints": [
+            {
+                "exercise": {
+                    "interval": {"startTime": "2026-05-13T08:00:00Z", "endTime": "2026-05-13T08:25:00Z"},
+                    "exerciseType": "WALKING",
+                    "metricsSummary": {
+                        "caloriesKcal": 16,
+                        "steps": "2038",
+                        "distanceMillimeters": 1609344,
+                        "averageHeartRateBeatsPerMinute": "81",
+                    },
+                    "displayName": "Walk",
+                    "activeDuration": "900s",
+                }
+            }
+        ],
+        "nextPageToken": None,
+    }
+
+    class S:
+        def list_data_points(self, dt, *, start_iso, end_iso, page_token=None, page_size=None):
+            assert dt == "exercise"
+            assert page_size == 5
+            return sample
+
+    monkeypatch.setattr(gh_tools, "GoogleHealthClient", lambda: S())
+    out = gh_tools._handle_health_recent_activity({"limit": 5})
+    parsed = json.loads(out)
+    assert len(parsed["sessions"]) == 1
+    sess = parsed["sessions"][0]
+    assert sess["exerciseType"] == "WALKING"
+    assert sess["calories_kcal"] == 16
+    assert sess["steps"] == 2038
+    assert sess["distance_meters"] == pytest.approx(1609.344)
+    assert sess["avg_heart_rate_bpm"] == 81
+    assert sess["active_duration_seconds"] == 900
+
+
 def test_schemas_all_have_name_and_description():
     for schema in [
         gh_tools.HEALTH_DATA_QUERY_SCHEMA,

@@ -7,6 +7,7 @@ into agent-facing strings; they never raise out of the tool boundary.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from typing import Any, Dict, Tuple
 
@@ -146,3 +147,66 @@ def _handle_health_data_types(args: Dict[str, Any]) -> str:
         return _format_error(exc)
     names = [dt.get("name") for dt in (raw.get("dataTypes") or []) if dt.get("name")]
     return json.dumps({"data_types": names}, indent=2)
+
+
+def _parse_duration_seconds(value) -> Any:
+    if value is None:
+        return None
+    s = str(value)
+    if s.endswith("s"):
+        s = s[:-1]
+    try:
+        return int(float(s))
+    except ValueError:
+        return None
+
+
+def _coerce_number(value) -> Any:
+    if value is None:
+        return None
+    try:
+        if isinstance(value, str) and "." in value:
+            return float(value)
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+
+def _handle_health_recent_activity(args: Dict[str, Any]) -> str:
+    limit = int(args.get("limit") or 5)
+    limit = max(1, min(limit, 50))
+    now = _dt.datetime.utcnow()
+    start = (now - _dt.timedelta(days=30)).isoformat(timespec="seconds")
+    end = now.isoformat(timespec="seconds")
+    try:
+        client = GoogleHealthClient()
+        raw = client.list_data_points(
+            "exercise",
+            start_iso=start,
+            end_iso=end,
+            page_size=limit,
+        )
+    except GoogleHealthError as exc:
+        return _format_error(exc)
+
+    sessions = []
+    for dp in (raw.get("dataPoints") or [])[:limit]:
+        ex = dp.get("exercise") or {}
+        interval = ex.get("interval") or {}
+        metrics = ex.get("metricsSummary") or {}
+        distance_mm = _coerce_number(metrics.get("distanceMillimeters"))
+        sessions.append({
+            "startTime": interval.get("startTime"),
+            "endTime": interval.get("endTime"),
+            "exerciseType": ex.get("exerciseType"),
+            "displayName": ex.get("displayName"),
+            "calories_kcal": _coerce_number(metrics.get("caloriesKcal")),
+            "distance_meters": (distance_mm / 1000.0) if distance_mm is not None else None,
+            "steps": _coerce_number(metrics.get("steps")),
+            "avg_heart_rate_bpm": _coerce_number(metrics.get("averageHeartRateBeatsPerMinute")),
+            "active_duration_seconds": _parse_duration_seconds(ex.get("activeDuration")),
+        })
+    return json.dumps({"sessions": sessions}, indent=2, default=str)
