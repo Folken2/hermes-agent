@@ -1,0 +1,14 @@
+# Default Hermes Agent config seeded into $HERMES_HOME/config.yaml on first boot.
+# The Docker entrypoint copies this file to $HERMES_HOME/config.yaml if that
+# file does not already exist (same pattern as .env.example -> .env).
+#
+# Edit live on the volume via `hermes config set <key> <value>` — changes there
+# survive future redeploys because the volume is mounted persistently.
+
+model:
+  default: moonshotai/kimi-k2.6
+  provider: openrouter
+  base_url: https://openrouter.ai/api/v1
+
+memory:
+  provider: supermemory

@@ -75,9 +75,16 @@ if [ ! -f "$HERMES_HOME/.env" ]; then
     cp "$INSTALL_DIR/.env.example" "$HERMES_HOME/.env"
 fi
 
-# config.yaml
+# config.yaml — seed from the active config.yaml in the repo if present,
+# else fall back to the heavily-commented example template (legacy behavior).
+# The repo-level config.yaml carries opinionated defaults (model, memory
+# provider) so a fresh volume boots with a usable config out of the box.
 if [ ! -f "$HERMES_HOME/config.yaml" ]; then
-    cp "$INSTALL_DIR/cli-config.yaml.example" "$HERMES_HOME/config.yaml"
+    if [ -f "$INSTALL_DIR/config.yaml" ]; then
+        cp "$INSTALL_DIR/config.yaml" "$HERMES_HOME/config.yaml"
+    else
+        cp "$INSTALL_DIR/cli-config.yaml.example" "$HERMES_HOME/config.yaml"
+    fi
 fi
 
 # SOUL.md
