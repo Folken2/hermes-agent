@@ -109,3 +109,30 @@ HEALTH_WRITE_DATAPOINT_SCHEMA = {
         "required": ["data_type", "payload"],
     },
 }
+
+
+def _format_error(exc: GoogleHealthError) -> str:
+    if isinstance(exc, GoogleHealthAuthRequiredError):
+        return _AUTH_REQUIRED_MSG
+    if isinstance(exc, GoogleHealthAPIError):
+        if exc.status_code == 403:
+            return _SCOPE_INSUFFICIENT_MSG
+        if exc.status_code == 429:
+            return f"Google Health rate limit hit (429). {exc}"
+        return f"Google Health API error ({exc.status_code}): {exc}"
+    return f"Google Health error: {exc}"
+
+
+def _handle_health_data_query(args: Dict[str, Any]) -> str:
+    try:
+        client = GoogleHealthClient()
+        result = client.list_data_points(
+            args["data_type"],
+            start_iso=args["start"],
+            end_iso=args["end"],
+            page_token=args.get("page_token"),
+            page_size=args.get("page_size"),
+        )
+    except GoogleHealthError as exc:
+        return _format_error(exc)
+    return json.dumps(result, indent=2, default=str)
