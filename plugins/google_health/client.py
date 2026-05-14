@@ -69,3 +69,61 @@ class GoogleHealthClient:
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+        allow_retry_on_401: bool = True,
+        empty_response: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        url = f"{self.base_url}{path}"
+        response = httpx.request(
+            method,
+            url,
+            headers=self._headers(),
+            params=_strip_none(params),
+            json=_strip_none(json_body) if json_body is not None else None,
+            timeout=30.0,
+        )
+        if response.status_code == 401 and allow_retry_on_401:
+            self._runtime = self._resolve_runtime(force_refresh=True, refresh_if_expiring=False)
+            return self.request(
+                method, path,
+                params=params, json_body=json_body,
+                allow_retry_on_401=False,
+                empty_response=empty_response,
+            )
+        if response.status_code == 401:
+            raise GoogleHealthAuthRequiredError(
+                "Google Health authentication failed or expired."
+            )
+        if 200 <= response.status_code < 300:
+            if not response.content:
+                return empty_response or {}
+            try:
+                return response.json()
+            except ValueError:
+                return {"raw": response.text}
+        body = response.text[:500] if response.text else ""
+        try:
+            parsed = response.json()
+            message = parsed.get("error", {}).get("message") or body or "Google Health API error"
+        except ValueError:
+            message = body or f"Google Health API error ({response.status_code})"
+        err = GoogleHealthAPIError(
+            message,
+            status_code=response.status_code,
+            response_body=body,
+        )
+        err.path = path
+        raise err
+
+
+def _strip_none(d: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if d is None:
+        return None
+    return {k: v for k, v in d.items() if v is not None}
