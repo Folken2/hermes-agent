@@ -92,6 +92,17 @@ if [ ! -f "$HERMES_HOME/SOUL.md" ]; then
     cp "$INSTALL_DIR/docker/SOUL.md" "$HERMES_HOME/SOUL.md"
 fi
 
+# Env-var overrides for config.yaml keys that have no runtime env override.
+# Essential on platforms without post-deploy shell access (Railway Hobby,
+# managed Fly.io, etc.) where `hermes config set` cannot be invoked
+# manually. Writes are idempotent — re-running with the same value is a
+# no-op. model.* keys (HERMES_MODEL / HERMES_INFERENCE_PROVIDER) are
+# already consumed at runtime by Python, so they don't need a bridge here.
+if [ -n "$HERMES_MEMORY_PROVIDER" ]; then
+    hermes config set memory.provider "$HERMES_MEMORY_PROVIDER" >/dev/null 2>&1 || \
+        echo "Warning: failed to set memory.provider from env var — continuing"
+fi
+
 # auth.json: bootstrap from env on first boot only.  Used by orchestrators
 # (e.g. provisioning a Hermes VPS from an account-management service) that
 # need to seed the OAuth refresh credential non-interactively, instead of
