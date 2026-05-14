@@ -136,3 +136,13 @@ def _handle_health_data_query(args: Dict[str, Any]) -> str:
     except GoogleHealthError as exc:
         return _format_error(exc)
     return json.dumps(result, indent=2, default=str)
+
+
+def _handle_health_data_types(args: Dict[str, Any]) -> str:
+    try:
+        client = GoogleHealthClient()
+        raw = client.list_authorized_data_types()
+    except GoogleHealthError as exc:
+        return _format_error(exc)
+    names = [dt.get("name") for dt in (raw.get("dataTypes") or []) if dt.get("name")]
+    return json.dumps({"data_types": names}, indent=2)

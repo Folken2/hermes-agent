@@ -52,6 +52,16 @@ def test_health_data_query_auth_required(monkeypatch):
     assert "hermes auth google-health" in (out if isinstance(out, str) else json.dumps(out))
 
 
+def test_health_data_types_returns_simplified_list(monkeypatch):
+    class S:
+        def list_authorized_data_types(self):
+            return {"dataTypes": [{"name": "exercise"}, {"name": "sleep"}, {"name": "heart_rate"}]}
+    monkeypatch.setattr(gh_tools, "GoogleHealthClient", lambda: S())
+    out = gh_tools._handle_health_data_types({})
+    parsed = json.loads(out)
+    assert parsed["data_types"] == ["exercise", "sleep", "heart_rate"]
+
+
 def test_schemas_all_have_name_and_description():
     for schema in [
         gh_tools.HEALTH_DATA_QUERY_SCHEMA,
