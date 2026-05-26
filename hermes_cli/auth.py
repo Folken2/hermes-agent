@@ -110,8 +110,15 @@ DEFAULT_SPOTIFY_SCOPE = " ".join((
     "user-library-read",
     "user-library-modify",
 ))
+DEFAULT_GOOGLE_HEALTH_API_BASE_URL = "https://health.googleapis.com/v4"
+DEFAULT_GOOGLE_HEALTH_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+DEFAULT_GOOGLE_HEALTH_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+DEFAULT_GOOGLE_HEALTH_SCOPE_READ = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+DEFAULT_GOOGLE_HEALTH_SCOPE_WRITE = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness"
+GOOGLE_HEALTH_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
 SERVICE_PROVIDER_NAMES: Dict[str, str] = {
     "spotify": "Spotify",
+    "google_health": "Google Health",
 }
 
 # Google Gemini OAuth (google-gemini-cli provider, Cloud Code Assist backend)
@@ -2243,6 +2250,140 @@ def get_spotify_auth_status() -> Dict[str, Any]:
     }
 
 
+def _refresh_google_health_token(
+    provider: Dict[str, Any],
+    *,
+    timeout_seconds: float = 30.0,
+) -> Dict[str, Any]:
+    """POST to the Google token endpoint with the refresh_token.
+
+    Google's installed-app PKCE flow does not require a client_secret.
+    Returns an updated provider state dict.
+    """
+    refresh_token = str(provider.get("refresh_token", "") or "").strip()
+    client_id = str(provider.get("client_id", "") or "").strip()
+    if not refresh_token or not client_id:
+        raise AuthError(
+            "Google Health refresh token or client_id missing — "
+            "re-run `hermes auth google-health`.",
+            provider="google_health",
+            code="google_health_refresh_token_missing",
+            relogin_required=True,
+        )
+    token_url = (
+        str(provider.get("token_endpoint", "") or "").strip()
+        or DEFAULT_GOOGLE_HEALTH_TOKEN_ENDPOINT
+    )
+    try:
+        resp = httpx.post(
+            token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": client_id,
+            },
+            timeout=timeout_seconds,
+        )
+    except Exception as exc:
+        raise AuthError(
+            f"Google Health token refresh failed: {exc}",
+            provider="google_health",
+            code="google_health_refresh_failed",
+        ) from exc
+
+    if resp.status_code >= 400:
+        detail = resp.text.strip()
+        raise AuthError(
+            "Google Health token refresh failed. Run "
+            "`hermes auth google-health` again."
+            + (f" Response: {detail[:200]}" if detail else ""),
+            provider="google_health",
+            code="google_health_refresh_failed",
+            relogin_required=True,
+        )
+
+    body = resp.json()
+    if not isinstance(body, dict) or not str(body.get("access_token", "") or "").strip():
+        raise AuthError(
+            "Google Health refresh response did not include an access_token.",
+            provider="google_health",
+            code="google_health_refresh_invalid",
+            relogin_required=True,
+        )
+
+    updated = dict(provider)
+    updated["access_token"] = body["access_token"]
+    expires_in = _coerce_ttl_seconds(body.get("expires_in")) or 3599
+    updated["expires_at"] = int(time.time()) + expires_in - 30
+    if body.get("refresh_token"):
+        updated["refresh_token"] = body["refresh_token"]
+    if body.get("scope"):
+        updated["scope"] = body["scope"]
+    if body.get("token_type"):
+        updated["token_type"] = body["token_type"]
+    return updated
+
+
+def resolve_google_health_runtime_credentials(
+    *,
+    force_refresh: bool = False,
+    refresh_if_expiring: bool = True,
+    refresh_skew_seconds: int = GOOGLE_HEALTH_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+) -> Dict[str, Any]:
+    """Return a runtime credential dict for the Google Health provider.
+
+    Mirrors resolve_spotify_runtime_credentials: returns
+    {access_token, base_url, scope, ...}. Refreshes on expiry using the
+    stored refresh_token against the Google token endpoint.
+    """
+    with _auth_store_lock():
+        auth_store = _load_auth_store()
+        state = _load_provider_state(auth_store, "google_health")
+        if not state:
+            raise AuthError(
+                "Google Health is not authenticated. "
+                "Run `hermes auth google-health` first.",
+                provider="google_health",
+                code="google_health_auth_missing",
+                relogin_required=True,
+            )
+
+        should_refresh = bool(force_refresh)
+        if not should_refresh and refresh_if_expiring:
+            should_refresh = _is_expiring(state.get("expires_at"), refresh_skew_seconds)
+        if should_refresh:
+            state = _refresh_google_health_token(state)
+            _store_provider_state(auth_store, "google_health", state, set_active=False)
+            _save_auth_store(auth_store)
+
+    access_token = str(state.get("access_token", "") or "").strip()
+    if not access_token:
+        raise AuthError(
+            "Google Health access token missing. "
+            "Run `hermes auth google-health` again.",
+            provider="google_health",
+            code="google_health_access_token_missing",
+            relogin_required=True,
+        )
+
+    base_url = (
+        str(state.get("api_base_url", "") or "").strip()
+        or DEFAULT_GOOGLE_HEALTH_API_BASE_URL
+    )
+    return {
+        "provider": "google_health",
+        "access_token": access_token,
+        "api_key": access_token,
+        "token_type": str(state.get("token_type", "Bearer") or "Bearer"),
+        "base_url": base_url,
+        "scope": str(state.get("scope") or "").strip(),
+        "client_id": str(state.get("client_id", "") or "").strip(),
+        "redirect_uri": str(state.get("redirect_uri", "") or "").strip(),
+        "expires_at": state.get("expires_at"),
+        "refresh_token": str(state.get("refresh_token", "") or "").strip(),
+    }
+
+
 def _spotify_interactive_setup(redirect_uri_hint: str) -> str:
     """Walk the user through creating a Spotify developer app, persist the
     resulting client_id to ~/.hermes/.env, and return it.
@@ -2395,6 +2536,255 @@ def login_spotify_command(args) -> None:
     print(f"  Auth state: {saved_to}")
     print("  Provider state saved under providers.spotify")
     print(f"  Docs: {SPOTIFY_DOCS_URL}")
+
+
+# =============================================================================
+# Google Health PKCE login
+# =============================================================================
+
+def _read_google_health_client_id_from_config() -> str:
+    """Read google_health.client_id from hermes config, if present."""
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config()
+        if not isinstance(cfg, dict):
+            return ""
+        gh = cfg.get("google_health") or {}
+        if not isinstance(gh, dict):
+            return ""
+        return str(gh.get("client_id") or "").strip()
+    except Exception:
+        return ""
+
+
+def _make_google_health_callback_handler(expected_path: str) -> tuple[type[BaseHTTPRequestHandler], dict[str, Any]]:
+    result: dict[str, Any] = {
+        "code": None,
+        "state": None,
+        "error": None,
+        "error_description": None,
+    }
+
+    class _GoogleHealthCallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != expected_path:
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write(b"Not found.")
+                return
+
+            params = parse_qs(parsed.query)
+            result["code"] = params.get("code", [None])[0]
+            result["state"] = params.get("state", [None])[0]
+            result["error"] = params.get("error", [None])[0]
+            result["error_description"] = params.get("error_description", [None])[0]
+
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            if result["error"]:
+                body = (
+                    "<html><body><h1>Google Health authorization failed.</h1>"
+                    "You can close this tab and return to the terminal.</body></html>"
+                )
+            else:
+                body = (
+                    "<html><body><h1>Google Health authorization received.</h1>"
+                    "You can close this tab and return to the terminal.</body></html>"
+                )
+            self.wfile.write(body.encode("utf-8"))
+
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A003
+            return
+
+    return _GoogleHealthCallbackHandler, result
+
+
+def _google_health_wait_for_callback(
+    host: str,
+    port: int,
+    path: str,
+    *,
+    timeout_seconds: float = 180.0,
+) -> dict[str, Any]:
+    handler_cls, result = _make_google_health_callback_handler(path)
+
+    class _ReuseHTTPServer(HTTPServer):
+        allow_reuse_address = True
+
+    try:
+        server = _ReuseHTTPServer((host, port), handler_cls)
+    except OSError as exc:
+        raise SystemExit(
+            f"Could not bind Google Health callback server on {host}:{port}: {exc}"
+        ) from exc
+
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True
+    )
+    thread.start()
+    deadline = time.monotonic() + max(5.0, timeout_seconds)
+    try:
+        while time.monotonic() < deadline:
+            if result["code"] or result["error"]:
+                return result
+            time.sleep(0.1)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1.0)
+    raise SystemExit(
+        "Google Health authorization timed out waiting for the local callback."
+    )
+
+
+def login_google_health_command(args) -> None:
+    """PKCE OAuth login for Google Health Platform API (installed-app flow)."""
+    from agent.google_oauth import _generate_pkce_pair, exchange_code
+
+    explicit_client_id = getattr(args, "client_id", None)
+    existing_state = get_provider_auth_state("google_health") or {}
+
+    client_id = (
+        ((explicit_client_id or "").strip())
+        or os.getenv("HERMES_GOOGLE_HEALTH_CLIENT_ID", "").strip()
+        or str(existing_state.get("client_id") or "").strip()
+        or _read_google_health_client_id_from_config()
+    )
+    if not client_id:
+        raise SystemExit(
+            "Google Health client_id is required. Set it via:\n"
+            "  hermes config set google_health.client_id <id>\n"
+            "  or env HERMES_GOOGLE_HEALTH_CLIENT_ID=<id>\n"
+            "  or --client-id <id>\n"
+            "Create the OAuth client at https://console.cloud.google.com/apis/credentials "
+            "(application type: Desktop app)."
+        )
+
+    write_scope = bool(getattr(args, "write", False)) or bool(
+        existing_state.get("write_scope_requested")
+    )
+    explicit_scope = (getattr(args, "scope", None) or "").strip()
+    if explicit_scope:
+        scope = explicit_scope
+    elif write_scope:
+        scope = DEFAULT_GOOGLE_HEALTH_SCOPE_WRITE
+    else:
+        scope = DEFAULT_GOOGLE_HEALTH_SCOPE_READ
+
+    # Bind a loopback callback server. Try a preferred port and fall back
+    # to an ephemeral one if it's taken.
+    preferred_port = 43828
+    host = "127.0.0.1"
+    callback_path = "/google-health/callback"
+
+    # Quick probe: try preferred port; if taken, fall through to ephemeral.
+    chosen_port = preferred_port
+    try:
+        probe = HTTPServer((host, preferred_port), BaseHTTPRequestHandler)
+        probe.server_close()
+    except OSError:
+        # Bind to ephemeral to discover a free port, then release.
+        probe = HTTPServer((host, 0), BaseHTTPRequestHandler)
+        chosen_port = probe.server_address[1]
+        probe.server_close()
+
+    redirect_uri = f"http://{host}:{chosen_port}{callback_path}"
+
+    verifier, challenge = _generate_pkce_pair()
+    state_nonce = uuid.uuid4().hex
+
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": scope,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state_nonce,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+    }
+    authorize_url = f"{DEFAULT_GOOGLE_HEALTH_AUTH_ENDPOINT}?{urlencode(params)}"
+
+    print("Starting Google Health PKCE login...")
+    print(f"Client ID: {client_id}")
+    print(f"Redirect URI: {redirect_uri}")
+    print(f"Scope: {scope}")
+    print()
+    print("Make sure this redirect URI is registered on your OAuth client:")
+    print("  https://console.cloud.google.com/apis/credentials")
+    print()
+    print("Open this URL to authorize Hermes:")
+    print(authorize_url)
+    print()
+
+    open_browser = not getattr(args, "no_browser", False)
+    if open_browser and not _is_remote_session():
+        try:
+            opened = webbrowser.open(authorize_url)
+        except Exception:
+            opened = False
+        if opened:
+            print("Browser opened for Google Health authorization.")
+        else:
+            print("Could not open the browser automatically; use the URL above.")
+
+    callback = _google_health_wait_for_callback(
+        host,
+        chosen_port,
+        callback_path,
+        timeout_seconds=float(getattr(args, "timeout", None) or 180.0),
+    )
+    if callback.get("error"):
+        detail = callback.get("error_description") or callback["error"]
+        raise SystemExit(f"Google Health authorization failed: {detail}")
+    if callback.get("state") != state_nonce:
+        raise SystemExit("Google Health authorization failed: state mismatch.")
+
+    code = str(callback.get("code") or "")
+    if not code:
+        raise SystemExit("Google Health authorization failed: missing code.")
+
+    token_payload = exchange_code(
+        code,
+        verifier,
+        redirect_uri,
+        client_id=client_id,
+        client_secret=None,  # PKCE installed-app flow
+        timeout=float(getattr(args, "timeout", None) or 20.0),
+    )
+
+    access_token = token_payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token.strip():
+        raise SystemExit("Google Health token exchange returned no access_token.")
+
+    expires_in = int(token_payload.get("expires_in") or 3599)
+    state_dict = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "api_base_url": DEFAULT_GOOGLE_HEALTH_API_BASE_URL,
+        "auth_endpoint": DEFAULT_GOOGLE_HEALTH_AUTH_ENDPOINT,
+        "token_endpoint": DEFAULT_GOOGLE_HEALTH_TOKEN_ENDPOINT,
+        "access_token": access_token,
+        "refresh_token": token_payload.get("refresh_token")
+            or existing_state.get("refresh_token"),
+        "scope": token_payload.get("scope") or scope,
+        "token_type": token_payload.get("token_type", "Bearer"),
+        "expires_at": int(time.time()) + expires_in - 30,
+        "write_scope_requested": write_scope,
+    }
+
+    with _auth_store_lock():
+        auth_store = _load_auth_store()
+        _store_provider_state(auth_store, "google_health", state_dict, set_active=False)
+        saved_to = _save_auth_store(auth_store)
+
+    print("Google Health login successful!")
+    print(f"  Auth state: {saved_to}")
+    print("  Provider state saved under providers.google_health")
+
 
 # =============================================================================
 # SSH / remote session detection
