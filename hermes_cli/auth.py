@@ -4030,6 +4030,87 @@ def get_codex_auth_status() -> Dict[str, Any]:
         }
 
 
+def get_claude_code_auth_status() -> Dict[str, Any]:
+    """Status snapshot for the Claude Code CLI connection.
+
+    Hermes delegates coding tasks to Claude Code (Anthropic's autonomous
+    coding agent) by driving its CLI from the terminal — see the
+    ``claude-code`` skill.  This verifies the *operational link* rather than a
+    Hermes inference provider: the ``claude`` binary is installed and the user
+    is authenticated (subscription OAuth login or ``ANTHROPIC_API_KEY``).
+
+    Authentication is probed with ``claude auth status --json``, which emits
+    e.g. ``{"loggedIn": true, "authMethod": "oauth_token",
+    "apiProvider": "firstParty"}`` and exits 0 whether or not logged in.
+
+    Returns a dict with: ``logged_in``, ``cli_found``, ``cli_path``,
+    ``version`` (best effort), ``auth_method``, ``api_provider``, ``error``.
+    """
+    cli_path = shutil.which("claude")
+    if not cli_path:
+        return {
+            "logged_in": False,
+            "cli_found": False,
+            "error": (
+                "claude CLI not found on PATH "
+                "(install: npm install -g @anthropic-ai/claude-code)"
+            ),
+        }
+
+    status: Dict[str, Any] = {
+        "logged_in": False,
+        "cli_found": True,
+        "cli_path": cli_path,
+    }
+
+    # Best-effort version string for diagnostics (non-fatal if it fails).
+    try:
+        ver = subprocess.run(
+            [cli_path, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if ver.returncode == 0 and ver.stdout.strip():
+            status["version"] = ver.stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    try:
+        proc = subprocess.run(
+            [cli_path, "auth", "status", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        status["error"] = "claude auth status timed out"
+        return status
+    except (subprocess.SubprocessError, OSError) as exc:
+        status["error"] = f"could not run claude auth status: {exc}"
+        return status
+
+    raw = (proc.stdout or "").strip()
+    try:
+        data = json.loads(raw) if raw else {}
+    except (ValueError, TypeError):
+        data = {}
+
+    if isinstance(data, dict) and data:
+        status["logged_in"] = bool(data.get("loggedIn"))
+        if data.get("authMethod"):
+            status["auth_method"] = data["authMethod"]
+        if data.get("apiProvider"):
+            status["api_provider"] = data["apiProvider"]
+    else:
+        # Couldn't parse JSON — surface the first line of output for debugging.
+        detail = (proc.stderr or proc.stdout or "").strip()
+        if detail:
+            status["error"] = detail.splitlines()[0][:200]
+
+    return status
+
+
 def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
     """Status snapshot for API-key providers (z.ai, Kimi, MiniMax)."""
     pconfig = PROVIDER_REGISTRY.get(provider_id)

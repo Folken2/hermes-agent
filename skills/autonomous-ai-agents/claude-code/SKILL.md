@@ -26,6 +26,23 @@ Delegate coding tasks to [Claude Code](https://code.claude.com/docs/en/cli-refer
 - **Version check:** `claude --version` (requires v2.x+)
 - **Update:** `claude update` or `claude upgrade`
 
+## Verify the Connection
+
+Hermes treats Claude Code as a delegation target, not an inference provider. To
+confirm the link is live (CLI installed **and** authenticated), run:
+
+```
+hermes doctor
+```
+
+The **Auth Providers** section reports a `Claude Code connection` line:
+- `✓ (authenticated, subscription / OAuth)` — ready to delegate
+- `⚠ (CLI installed, not authenticated …)` — run `claude` once to log in
+- CLI-not-installed note — `npm install -g @anthropic-ai/claude-code`
+
+Under the hood this calls `claude auth status --json`. You can run that yourself
+for a quick check (`{"loggedIn": true, "authMethod": "oauth_token", …}`).
+
 ## Two Orchestration Modes
 
 Hermes interacts with Claude Code in two fundamentally different ways. Choose based on the task.
