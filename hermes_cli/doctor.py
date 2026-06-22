@@ -750,6 +750,7 @@ def run_doctor(args):
         from hermes_cli.auth import (
             get_nous_auth_status,
             get_codex_auth_status,
+            get_claude_code_auth_status,
             get_gemini_oauth_auth_status,
             get_minimax_oauth_auth_status,
         )
@@ -767,6 +768,30 @@ def run_doctor(args):
             check_warn("OpenAI Codex auth", "(not logged in)")
             if codex_status.get("error"):
                 check_info(codex_status["error"])
+
+        # Claude Code is a delegation target (Hermes drives its CLI to hand off
+        # coding tasks — see the `claude-code` skill), not a Hermes inference
+        # provider, so this verifies the operational link: CLI present + authed.
+        claude_status = get_claude_code_auth_status()
+        if claude_status.get("logged_in"):
+            method = claude_status.get("auth_method") or ""
+            label = {"oauth_token": "subscription / OAuth"}.get(method, method)
+            suffix = f", {label}" if label else ""
+            check_ok("Claude Code connection", f"(authenticated{suffix})")
+            if claude_status.get("version"):
+                check_info(f"claude {claude_status['version']}")
+        elif claude_status.get("cli_found"):
+            check_warn(
+                "Claude Code connection",
+                "(CLI installed, not authenticated — run `claude` to log in)",
+            )
+            if claude_status.get("error"):
+                check_info(claude_status["error"])
+        else:
+            check_info(
+                "Claude Code CLI not installed (optional — enables delegating "
+                "coding tasks; install: npm install -g @anthropic-ai/claude-code)"
+            )
 
         gemini_status = get_gemini_oauth_auth_status()
         if gemini_status.get("logged_in"):
