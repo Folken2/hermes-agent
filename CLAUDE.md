@@ -67,6 +67,29 @@ don't duplicate it here.
   for one trusted org's employees in one instance; separate untrusted tenants
   (different companies) should get separate instances/containers.
 
+## Architecture decision: skills vs subagents vs profiles
+Mnemonic: **Profile = WHO** (a distinct brain/identity) · **Skill = WHAT** (a
+capability) · **Subagent = HOW** (delegated compute).
+- **Skill** (`skills/*/SKILL.md`) = instructions + tools loaded into the **same
+  agent, same brain, same session**; can persist its own data within `HERMES_HOME`.
+- **Subagent** (`delegate_task`, incl. `background=true`) = orchestrator spawns a
+  fresh-context worker for a bounded/heavy/parallel task; result returns. Same
+  installation, separate scratch context. NOT cross-profile.
+- **Profile** = fully isolated Hermes instance (separate brain/memory/persona/gateway).
+
+**Decision for my personal assistant: ONE Hermes (one profile) + mini-apps as SKILLS.**
+- The wardrobe recommender, health assistant, etc. are *WHATs* → build them as skills
+  (e.g. `wardrobe-recommender`, `health-assistant`), each with its own instructions +
+  tools + persisted data, all sharing my one brain.
+- **Why not a profile per app:** profiles are separate brains, so cross-domain
+  reasoning (wardrobe + health + calendar together) becomes impossible and context
+  fragments — that shared context is the whole value of a personal assistant.
+- Use **subagents** (`delegate_task`) for heavy/parallel jobs (e.g. "research & compare
+  20 options") to keep the orchestrator's context clean.
+- **Reserve profiles for distinct identities** (work-vs-personal firewall, or
+  profile-per-employee/customer in the sell-to-companies idea). Profiles are isolation
+  boundaries, not orchestration units — 1 Hermes does not orchestrate across profiles.
+
 ## GitHub auth caveat
 - Two `gh` accounts are configured: `Folken2` (owns the fork; use for pushes) and
   `albertf-sapira` (Sapira work). `Folken2` needs the `workflow` scope to push
