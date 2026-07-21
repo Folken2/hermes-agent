@@ -75,3 +75,43 @@ don't duplicate it here.
 
 ## My preferences (fill in)
 - <!-- e.g. tone, when to ask before acting, languages/units, PR/commit style -->
+
+## Future idea: sell Hermes to companies (NOT implemented — design sketch only)
+Commercial "agent-per-employee" product. MIT license permits resale (rebrand off
+the "Hermes"/Nous name; model costs are pass-through). **Do not build yet** — this
+is a captured direction, not a task.
+
+**Tenancy model: instance-per-company, profile-per-employee.**
+- Each **company = its own Hermes instance** (own container + Railway Volume + config
+  + billing). This is the real security/tenant boundary — never mix companies in one box.
+- Each **employee = a profile** inside their company's instance (own brain, persona,
+  skills, bot). Profiles are soft (directory-level) isolation — acceptable *within* one
+  trusted org, not across orgs.
+
+```
+Control plane (provisioning + billing + admin)
+   │  on signup: create company instance, seed employee profiles
+   ▼
+Company A instance            Company B instance         ... (a FLEET of single-instances)
+  container + /opt/data vol     container + /opt/data vol
+   ├ profile: alice (bot+brain)  ├ profile: dave
+   ├ profile: bob               └ profile: erin
+   └ LLM gateway (per-tenant cost tracking + budget caps)
+```
+
+**Why a fleet, not one cluster:** the core is single-instance by design
+(SQLite `state.db` + single writable volume — can't be shared across replicas). Scale
+by running MANY instances (one per company), orchestrated via Railway templates or a
+provisioning service — not one giant multi-tenant DB.
+
+**Pieces to build around the profile primitive:**
+- **Provisioning:** programmatically spin up a company instance + employee profiles
+  (`hermes profile create`), wire each employee's bot/persona.
+- **Billing / metering:** per-tenant model-spend tracking + caps — the legit use case
+  for a self-hosted LLM gateway (OmniRoute/LiteLLM) in front of providers.
+- **Auth/SSO**, **per-volume backups**, and **updates** via the profile
+  *distribution-owned* bundles (push skill/persona updates without touching customer
+  memory/sessions — the packaging split is built for exactly this).
+
+**Open questions for later:** per-instance vs shared-gateway cost model; onboarding UX
+(Desktop app remote-gateway per employee vs messaging bots); data residency; support/SLA.
