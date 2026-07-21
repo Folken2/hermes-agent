@@ -49,6 +49,24 @@ don't duplicate it here.
 - Agent persona and "how I use Hermes" preferences → `/opt/data/SOUL.md` (edit via
   Railway Console or the Desktop app), **not** this file.
 
+## Profiles (how they work)
+- A **profile is a fully independent `HERMES_HOME`** (`profiles.py:4`): its own
+  `config.yaml`, `.env`, **memory, sessions, `state.db`**, `SOUL.md`, skills,
+  `mcp.json`, cron, gateway, and logs. Live under `<HERMES_HOME>/profiles/<name>/`.
+- So a profile is **NOT a persona sharing one brain** — it's a separate *brain*:
+  different memory + sessions + tools + persona per profile. Isolation is the point.
+- Our Railway deploy runs `HERMES_HOME=/opt/data` = the **`default` profile**
+  (phone + Desktop share this one brain). Extra profiles = additional isolated brains.
+- Create: `hermes profile create <name> [--clone]` (`--clone` copies
+  config/.env/SOUL.md/skills/memory from the source). Each profile can bind its own
+  gateway/bot; the container reconciles per-profile gateways (`02-reconcile-profiles`).
+- Packaging layer: **distribution-owned** paths (`SOUL.md`, `skills/`, `mcp.json`,
+  `cron/`) are shippable/updatable as a bundle; **user-owned** (`memory/`,
+  `sessions/`, `state.db`, `auth.json`, `.env`) are never overwritten on update.
+- Isolation is **directory-level (soft)**, not a hardened security boundary — fine
+  for one trusted org's employees in one instance; separate untrusted tenants
+  (different companies) should get separate instances/containers.
+
 ## GitHub auth caveat
 - Two `gh` accounts are configured: `Folken2` (owns the fork; use for pushes) and
   `albertf-sapira` (Sapira work). `Folken2` needs the `workflow` scope to push
